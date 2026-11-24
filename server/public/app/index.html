@@ -1175,7 +1175,7 @@ function badge(v){ const b = $(`.dk[data-v="${v}"]`); if (view !== v && !$(".bdg
 let briefs = [], briefNext = null, briefShown = null;
 async function loadBriefs(){
   if (!cfg.server) return;
-  try { const [j] = await Promise.all([api("/api/briefs"), loadTips()]); briefs = j.briefs || []; briefNext = j.next; renderBrief(briefShown && briefs.find(b => b.id === briefShown) || briefs[0]); }
+  try { const [j, pp] = await Promise.all([api("/api/briefs"), paper ? null : api("/api/paper").catch(() => null), loadTips()]); if (pp) paper = pp; briefs = j.briefs || []; briefNext = j.next; renderBrief(briefShown && briefs.find(b => b.id === briefShown) || briefs[0]); }
   catch (e) { $("#briefBox").innerHTML = `<div class="empty">Can't load briefings: ${esc(e.message)}</div>`; }
 }
 function toneWord(t){
@@ -1195,11 +1195,25 @@ function renderBrief(b){
   }
   briefShown = b.id;
   const [tw, tsub] = toneWord(b.tone);
-  const net = b.tone && (b.tone.positive + b.tone.negative) ? (b.tone.positive - b.tone.negative) / (b.tone.positive + b.tone.negative) : 0;
+  // Gauge = YOUR money (Paper account) + how your watchlist moved. Headline tone is secondary.
+  const acct = paper ? {pnl: paper.positions.reduce((a, p) => a + p.qty * livePrice(p.sym, p.price), paper.cash) - paper.start, start: paper.start} : (b.account ? {pnl: b.account.pnl, start: 10000} : null);
+  const mv = (b.moves || []).filter(m => m.chg6 != null);
+  const down = mv.filter(m => m.chg6 < 0).length;
+  let net = 0, gTitle = "YOUR MONEY", gBig, gSub;
+  if (acct) {
+    const pct = acct.pnl / acct.start * 100;
+    net = Math.max(-1, Math.min(1, pct / 5));
+    gBig = Math.abs(acct.pnl) < 0.5 ? "Flat" : `${acct.pnl > 0 ? "Up" : "Down"} $${Math.abs(acct.pnl).toLocaleString("en-US", {maximumFractionDigits: 0})} (${pct > 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)`;
+    gSub = `Paper account since you started${mv.length ? ` · watchlist: ${down} of ${mv.length} down over 6h` : ""}`;
+  } else {
+    net = mv.length ? Math.max(-1, Math.min(1, mv.reduce((a, m) => a + m.chg6, 0) / mv.length / 3)) : 0;
+    gTitle = "YOUR WATCHLIST"; gBig = mv.length ? `${down} of ${mv.length} down over 6h` : "No data yet"; gSub = "";
+  }
   html += `<div class="gauge"><svg viewBox="0 0 118 68"><defs><linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="#FF4D6D"/><stop offset=".5" stop-color="#FFD23D"/><stop offset="1" stop-color="#00E5A0"/></linearGradient></defs>
     <path d="M8 60 A51 51 0 0 1 110 60" fill="none" stroke="url(#gg)" stroke-width="9" stroke-linecap="round"/>
     <g class="needle" id="needle" style="transform:rotate(-90deg)"><line x1="59" y1="60" x2="59" y2="18" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="59" cy="60" r="6" fill="#fff"/></g></svg>
-    <div><span style="font-size:10.5px;font-weight:900;letter-spacing:.12em">HEADLINE TONE</span><b>${tw}</b><span>${tsub}</span></div></div>`;
+    <div><span style="font-size:10.5px;font-weight:900;letter-spacing:.12em">${gTitle}</span><b class="${net > 0.02 ? "u" : net < -0.02 ? "d" : ""}">${gBig}</b><span>${gSub}</span>
+    <span style="display:block;margin-top:4px;font-size:11px;color:var(--faint)">News tone (all headlines, not just yours): ${tw.toLowerCase()}</span></div></div>`;
   html += `<div class="bcard"><div class="when">${new Date(b.ts).toLocaleString([], {weekday:"short", hour:"numeric", minute:"2-digit"}).toUpperCase()} · ${b.count || 0} STORIES</div><h4 id="bHead"></h4><p>${esc(b.summary)}</p></div>`;
   if (b.moves?.length) html += `<div class="moves">${b.moves.map((m, i) => `<div class="mv" style="animation-delay:${i*60}ms"><b>${esc(m.sym)}</b>$${fmtPrice(m.price)}<br>${m.chg6 != null ? `<span class="${m.chg6>=0?"u":"d"}">${m.chg6>=0?"▲":"▼"} ${Math.abs(m.chg6).toFixed(1)}%</span> 6h` : ""}</div>`).join("")}</div>`;
   if (b.stories) {
@@ -1531,6 +1545,17 @@ function wireTips(){
   front.addEventListener("touchend", () => { front.style.transition = ""; if (Math.abs(dx) > 80) go(dx < 0 ? 1 : -1); else front.style.transform = ""; dx = 0; });
 }
 function rerenderBrief(keepScroll){ const box = $("#briefBox"), y = box.scrollTop; renderBrief(briefShown && briefs.find(b => b.id === briefShown) || briefs[0]); if (keepScroll) box.scrollTop = y; }
+
+// ------------------------------------------------------- auto-update check
+const UI_VERSION = "2026-11-24.2";
+if (location.protocol.startsWith("http")) {
+  const checkVersion = () => fetch("/app/version.json?t=" + Date.now()).then(r => r.json()).then(j => {
+    if (j.v && j.v !== UI_VERSION && !$$(".sheet.show").length) { try { window.__flushSave && __flushSave(); } catch {} location.reload(); }
+  }).catch(() => {});
+  setInterval(checkVersion, 5 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+  setTimeout(checkVersion, 4000);
+}
 
 // ------------------------------------------------------------------ boot
 function start(){ buildTickers(); render(true); loadFeed(); connectLive(); updateStatus(); }

@@ -555,7 +555,8 @@ Return JSON with:
       headline: scrub(data.headline) || "Market briefing",
       summary: scrub(data.summary),
       stories, bigPicture: [...offLimits, ...bgStories].slice(0, 5),
-      holdings: Object.entries(held).map(([sym, h]) => ({ sym, usd: Math.round(h.usd) })),
+      holdings: Object.entries(held).map(([sym, h]) => ({ sym, usd: Math.round(h.usd), pnlPct: h.pnlPct })),
+      account: { value: paper.value, pnl: paper.pnl, pnlPct: paper.pnlPct, cash: paper.cash },
       moves, tone, count: rows.length,
       // keep older app versions working
       sections: [
