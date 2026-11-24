@@ -1,10 +1,9 @@
 name: Deploy Pulse server
 
+# Manual only (Actions → Deploy Pulse server → Run workflow).
+# Needs repo secrets CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and APP_KEY.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ["server/**", ".github/workflows/deploy-server.yml"]
 
 jobs:
   deploy:
