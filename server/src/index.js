@@ -179,7 +179,7 @@ export class Hub extends DurableObject {
     }
     if (p === "/api/briefs/new" && req.method === "POST") {
       const last = this.sql.exec("SELECT ts FROM briefs ORDER BY id DESC LIMIT 1").toArray()[0];
-      if (last && Date.now() - last.ts < 10 * 60_000) return json({ error: "A briefing was just made — try again in a few minutes" }, 429);
+      if (last && Date.now() - last.ts < 10 * 60_000 && url.searchParams.get("force") !== "1") return json({ error: "A briefing was just made — try again in a few minutes" }, 429);
       try { return json({ ok: true, brief: await this.makeBrief() }); }
       catch (e) { return json({ error: "Briefing failed: " + (e.message || e) }, 500); }
     }
@@ -511,10 +511,25 @@ Return JSON with:
 
     // Safety net: drop any sentence that turns into trade advice.
     const advice = /\b(you should|we recommend|i recommend|consider (buying|selling|adding|trimming)|good time to (buy|sell)|(buy|sell) (now|the dip|more)|take profits?|price target|will (rise|fall|reach|hit|go up|go down|drop|climb))\b/i;
-    const scrub = (t) => String(t || "").split(/(?<=[.!?])\s+/).filter((x) => !advice.test(x)).join(" ").trim();
+    const scrub = (t) => String(t || "").replace(/^\s*what it means for you\s*[:\-—]\s*/i, "").split(/(?<=[.!?])\s+/).filter((x) => !advice.test(x)).join(" ").trim();
     const byId = (list, prefix, arr) => Object.fromEntries((arr || []).map((x) => [String(x.id || "").toUpperCase(), scrub(x.impact)]).filter(([k, v]) => k.startsWith(prefix) && v));
     const tImp = byId(tradeable, "T", data.tradeable), bImp = byId(background, "B", data.background);
     const demoted = new Set((data.tradeable || []).filter((x) => x.tag === "background" && /can.?t buy|not available|institution|only available|-only/i.test(x.impact || "")).map((x) => String(x.id).toUpperCase()));
+    // Second pass: anything the model skipped gets its own short request so every story has a real line.
+    const missing = tradeable.map((r, i) => `T${i + 1}`).filter((id) => !tImp[id]);
+    if (missing.length) {
+      try {
+        const mList = missing.map((id) => { const r = tradeable[Number(id.slice(1)) - 1]; return `${id}. [${r.src_name}] ${r.title}\n    Touches: ${touches(r).map(describe).join("; ")}`; }).join("\n");
+        const res2 = await this.env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+          messages: [{ role: "system", content: system }, { role: "user", content: `Write the "What it means for you" line for EACH of these ${missing.length} stories. Every id must appear.\n\n${mList}\n\nReturn JSON: {"tradeable":[{"id":"T#","tag":"tradeable","impact":"..."}]}` }],
+          response_format: { type: "json_schema", json_schema: { type: "object", properties: { tradeable: schema.properties.tradeable }, required: ["tradeable"] } },
+          max_tokens: 1400, temperature: 0.2,
+        });
+        let d2 = res2?.response; if (typeof d2 === "string") { const m = d2.match(/\{[\s\S]*\}/); d2 = JSON.parse(m ? m[0] : d2); }
+        Object.assign(tImp, byId(tradeable, "T", d2?.tradeable));
+        for (const x of d2?.tradeable || []) if (x.tag === "background" && /can.?t buy|not available|institution|only available|-only/i.test(x.impact || "")) demoted.add(String(x.id).toUpperCase());
+      } catch {}
+    }
 
     const story = (r, tag, impact) => {
       const syms = touches(r);
