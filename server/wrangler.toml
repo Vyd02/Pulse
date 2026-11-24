@@ -1,0 +1,29 @@
+name = "pulse"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Check every feed once a minute, around the clock
+[triggers]
+crons = ["* * * * *"]
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+[observability]
+enabled = true
+
+# The app's screens live here, so updates reach the phone without a new APK
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+# Free AI model for the news briefings
+[ai]
+binding = "AI"
